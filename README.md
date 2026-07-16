@@ -2,7 +2,7 @@
 
 Predicting UK house prices, but actually dealing with the fact that nearby sales aren't independent observations -- most write-ups on this kind of problem ignore spatial autocorrelation and time-based leakage entirely.
 
-Region and time window: TBD, see PLAN.md. Data is Land Registry price paid records joined to ONS postcode coordinates.
+Region and time window: Greater London, 2023-01 to 2025-12. Data is Land Registry price paid records joined to ONS postcode coordinates.
 
 Still working through it.
 
