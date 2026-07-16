@@ -79,6 +79,19 @@ def build_dataset() -> pd.DataFrame:
     return ppd.merge(lookup, on="postcode", how="inner")
 
 
+def filter_residential(df: pd.DataFrame) -> pd.DataFrame:
+    # category b = repossessions/buy-to-lets/transfers, property_type o = commercial --
+    # both carry non-residential price outliers (up to £793m), not what an avm targets
+    return df[(df["ppd_category_type"] == "A") & (df["property_type"] != "O")].reset_index(drop=True)
+
+
+def trim_price_outliers(df: pd.DataFrame, floor: int = 10_000, cap_quantile: float = 0.999) -> pd.DataFrame:
+    # even category a includes nominal/non-arm's-length transfers (e.g. price=1) and
+    # occasional data-entry errors (a £540m terraced house) -- floor + top 0.1% trim
+    cap = df["price"].quantile(cap_quantile)
+    return df[(df["price"] >= floor) & (df["price"] <= cap)].reset_index(drop=True)
+
+
 def main() -> None:
     DATA_PROCESSED.mkdir(parents=True, exist_ok=True)
     df = build_dataset()
