@@ -29,10 +29,9 @@ def test_trailing_price_excludes_same_day_and_future_sales():
 
 
 def test_trailing_price_falls_outside_window():
-    dates = ["2023-01-01"] + [f"2023-06-{d:02d}" for d in range(1, 3)]
-    df = _sales("h1", dates, [500, 10, 20])
+    df = _sales("h1", ["2022-01-01", "2023-06-01", "2023-06-02"], [500, 10, 20])
     out, _ = add_hex_trailing_stats(df)
-    # jan-01 sale is >365d before the june sales, must not count toward their trailing stats
+    # 2022-01-01 sale is >365d before the june sales, must not count toward their trailing stats
     june = out[out["date_of_transfer"] == "2023-06-02"].iloc[0]
     assert june["hex_trailing_price"] == 10
 
