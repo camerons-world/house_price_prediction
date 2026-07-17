@@ -13,3 +13,4 @@ plotly
 matplotlib
 seaborn
 jupyter
+pytest

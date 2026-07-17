@@ -57,6 +57,10 @@ def add_hex_trailing_stats(df: pd.DataFrame) -> pd.DataFrame:
     citywide_price.index = df.index
     df["hex_trailing_price"] = df["hex_trailing_price"].fillna(citywide_price)
     df["hex_trailing_count"] = df["hex_trailing_count"].fillna(0)
+
+    # handful of sales on day 1 of the window have no prior data at all, citywide or
+    # otherwise -- genuine cold start, nothing to fall back to, so drop rather than fabricate
+    df = df.dropna(subset=["hex_trailing_price"]).reset_index(drop=True)
     return df, rolled
 
 
