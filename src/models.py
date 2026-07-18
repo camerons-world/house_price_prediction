@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from pygam import LinearGAM, f, s
+from pygam import LinearGAM, f, l, s
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
@@ -15,7 +15,7 @@ from src.features import build_features
 from src.spatial_diagnostics import morans_i_on_residuals, spatial_group_kfold
 
 CATEGORICAL = ["property_type", "old_new", "duration"]
-BASELINE_NUMERIC = ["dist_to_centre_km", "sale_year", "sale_month"]
+BASELINE_NUMERIC = ["dist_to_centre_km", "sale_year", "sale_month_sin", "sale_month_cos", "sdlt_rush"]
 HEX_NUMERIC = ["hex_trailing_price", "hex_trailing_count", "hex_neighbor_lag"]
 TARGET = "price"
 MODEL_PATH = DATA_PROCESSED / "xgb_pipeline.joblib"
@@ -60,13 +60,22 @@ def gam_pipeline(numeric_cols: list[str]) -> Pipeline:
     ])
     n_cat = len(CATEGORICAL)
     # smooth terms on distance/hex location features, factor terms on property attrs,
-    # coarser smoothing on sale_year/sale_month (not spatial, no reason to expect wiggle)
+    # coarser smoothing on sale_year (not spatial, no reason to expect wiggle), plain
+    # linear terms for the sin/cos pair and the binary sdlt flag -- a sinusoid pair is
+    # already the smooth shape, and a 0/1 flag has nothing to smooth
+    linear_cols = ("sale_month_sin", "sale_month_cos", "sdlt_rush")
     terms = None
     for i in range(n_cat):
         terms = f(i) if terms is None else terms + f(i)
     for j, col in enumerate(numeric_cols):
         idx = n_cat + j
-        terms = terms + (s(idx) if col not in ("sale_year", "sale_month") else s(idx, n_splines=6))
+        if col == "sale_year":
+            term = s(idx, n_splines=6)
+        elif col in linear_cols:
+            term = l(idx)
+        else:
+            term = s(idx)
+        terms = terms + term
     gam = LinearGAM(terms)
     return Pipeline([("pre", pre), ("model", gam)])
 

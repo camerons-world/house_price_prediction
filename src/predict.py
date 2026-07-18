@@ -5,6 +5,7 @@ import json
 
 import h3
 import joblib
+import numpy as np
 import pandas as pd
 
 from src import models
@@ -84,13 +85,16 @@ def predict_price(postcode: str, property_type: str, duration: str, old_new: str
         hex_trailing_count = 0
         hex_neighbor_lag = meta["citywide_trailing_price"]
 
+    ref_month = meta["reference_month"]
     features = pd.DataFrame([{
         "property_type": property_type,
         "old_new": old_new,
         "duration": duration,
         "dist_to_centre_km": row["dist_to_centre_km"].iloc[0],
         "sale_year": meta["reference_year"],
-        "sale_month": meta["reference_month"],
+        "sale_month_sin": np.sin(2 * np.pi * ref_month / 12),
+        "sale_month_cos": np.cos(2 * np.pi * ref_month / 12),
+        "sdlt_rush": 0,  # reference date is always outside the mar/apr 2025 rush window
         "hex_trailing_price": hex_trailing_price,
         "hex_trailing_count": hex_trailing_count,
         "hex_neighbor_lag": hex_neighbor_lag,

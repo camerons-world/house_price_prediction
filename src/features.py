@@ -29,9 +29,16 @@ def add_distance_to_centre(df: pd.DataFrame) -> pd.DataFrame:
     return df[df["dist_to_centre_km"] <= MAX_RADIUS_KM].reset_index(drop=True)
 
 
+SDLT_RUSH_WINDOW = ("2025-03-01", "2025-04-30")  # sdlt nil-rate band reverted 1 apr 2025 -- see eda notebook
+
+
 def add_date_parts(df: pd.DataFrame) -> pd.DataFrame:
     df["sale_year"] = df["date_of_transfer"].dt.year
-    df["sale_month"] = df["date_of_transfer"].dt.month
+    month = df["date_of_transfer"].dt.month
+    # cyclical encoding -- dec/jan are numerically 11 apart but 1 month apart in reality
+    df["sale_month_sin"] = np.sin(2 * np.pi * month / 12)
+    df["sale_month_cos"] = np.cos(2 * np.pi * month / 12)
+    df["sdlt_rush"] = df["date_of_transfer"].between(*SDLT_RUSH_WINDOW).astype(int)
     return df
 
 
