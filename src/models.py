@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from pygam import LinearGAM, f, l, s
 from sklearn.compose import ColumnTransformer
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
+from sklearn.model_selection import RandomizedSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, StandardScaler
 from xgboost import XGBRegressor
@@ -20,9 +22,12 @@ HEX_NUMERIC = ["hex_trailing_price", "hex_trailing_count", "hex_neighbor_lag"]
 # needs a specific street/house, not just a postcode -- research/evaluation only for now,
 # not wired into fit_full_pipeline/predict.py until the final feature set is settled
 ADDRESS_NUMERIC = ["paon_is_named", "street_trailing_price"]
+# res 9 (finer local trend) measured as a standalone win via evaluate_cv ablation --
+# res 7 and a k=2 neighbor ring were also tried and dropped, see features.py
+MULTI_RES_NUMERIC = ["hex9_trailing_price"]
 # accumulates through the improvement-batch phases -- compare_models/shap_summary track
 # "how good can the model get", fit_full_pipeline stays on the serving-safe subset
-RESEARCH_NUMERIC = BASELINE_NUMERIC + HEX_NUMERIC + ADDRESS_NUMERIC
+RESEARCH_NUMERIC = BASELINE_NUMERIC + HEX_NUMERIC + ADDRESS_NUMERIC + MULTI_RES_NUMERIC
 TARGET = "price"
 MODEL_PATH = DATA_PROCESSED / "xgb_pipeline.joblib"
 
@@ -53,7 +58,9 @@ def xgb_pipeline(numeric_cols: list[str]) -> Pipeline:
         ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), CATEGORICAL),
         ("num", "passthrough", numeric_cols),
     ])
-    model = XGBRegressor(n_estimators=400, max_depth=5, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8)
+    # tuned via tune_xgb's spatial-cv randomized search -- marginal over the original
+    # hand-picked values (rmse 0.1475 -> 0.1474), adopted anyway since it cost nothing
+    model = XGBRegressor(n_estimators=300, max_depth=7, learning_rate=0.03, subsample=0.8, colsample_bytree=1.0)
     return Pipeline([("pre", pre), ("model", model)])
 
 
@@ -84,6 +91,42 @@ def gam_pipeline(numeric_cols: list[str]) -> Pipeline:
         terms = terms + term
     gam = LinearGAM(terms)
     return Pipeline([("pre", pre), ("model", gam)])
+
+
+def lgbm_pipeline(numeric_cols: list[str]) -> Pipeline:
+    # ordinal-encoded + passthrough, same simplification as gam_pipeline -- lightgbm's
+    # "native" categorical splits need category-dtype columns preserved through the
+    # pipeline, which ColumnTransformer's default array output doesn't keep. this forfeits
+    # that specific advantage but is still a fair, working comparison against xgboost
+    pre = ColumnTransformer([
+        ("cat", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1), CATEGORICAL),
+        ("num", "passthrough", numeric_cols),
+    ])
+    model = lgb.LGBMRegressor(
+        n_estimators=400, max_depth=5, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8, verbosity=-1
+    )
+    return Pipeline([("pre", pre), ("model", model)])
+
+
+def tune_xgb(df: pd.DataFrame, numeric_cols: list[str] = RESEARCH_NUMERIC, n_iter: int = 20) -> tuple[dict, float]:
+    # xgb_pipeline's hyperparameters were hand-picked, never searched -- spatial_group_kfold
+    # as the cv splitter here too, a plain k-fold search would leak the same way plain
+    # k-fold evaluation would
+    X, y = make_frame(df, numeric_cols)
+    param_dist = {
+        "model__max_depth": [3, 4, 5, 6, 7, 8],
+        "model__learning_rate": [0.01, 0.03, 0.05, 0.08, 0.1],
+        "model__n_estimators": [200, 300, 400, 600],
+        "model__subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
+        "model__colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
+    }
+    cv = list(spatial_group_kfold(df, n_splits=5))
+    search = RandomizedSearchCV(
+        xgb_pipeline(numeric_cols), param_dist, n_iter=n_iter, cv=cv,
+        scoring="neg_root_mean_squared_error", random_state=0, n_jobs=-1,
+    )
+    search.fit(X, y)
+    return search.best_params_, -search.best_score_
 
 
 def fit_full_pipeline(df: pd.DataFrame) -> Pipeline:
@@ -125,6 +168,7 @@ def compare_models(df: pd.DataFrame) -> pd.DataFrame:
         "linear": evaluate_cv(df, X, y, linear_pipeline, numeric_cols),
         "gam": evaluate_cv(df, X, y, gam_pipeline, numeric_cols),
         "xgboost": evaluate_cv(df, X, y, xgb_pipeline, numeric_cols),
+        "lightgbm": evaluate_cv(df, X, y, lgbm_pipeline, numeric_cols),
     }
     return pd.DataFrame(results).T
 

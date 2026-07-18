@@ -71,23 +71,60 @@ def add_hex_trailing_stats(df: pd.DataFrame) -> pd.DataFrame:
     return df, rolled
 
 
-def add_neighbor_lag(df: pd.DataFrame, trailing_lookup: pd.DataFrame) -> pd.DataFrame:
-    # k=1 ring average of each neighbouring hex's own trailing price, as of <= this row's
+def add_neighbor_lag(df: pd.DataFrame, trailing_lookup: pd.DataFrame, k: int = 1, col_name: str = "hex_neighbor_lag") -> pd.DataFrame:
+    # k-ring average of each neighbouring hex's own trailing price, as of <= this row's
     # date (merge_asof direction='backward') -- same strictly-prior rule, extended to neighbours
     neighbor_lookup = trailing_lookup[["hex_id", "date_of_transfer", "hex_trailing_price"]].rename(
         columns={"hex_id": "neighbor_hex", "hex_trailing_price": "neighbor_price"}
     ).sort_values("date_of_transfer")
 
     df["_row_id"] = df.index
-    neighbor_ids = df["hex_id"].apply(lambda h: [n for n in h3.grid_disk(h, 1) if n != h])
+    neighbor_ids = df["hex_id"].apply(lambda h: [n for n in h3.grid_disk(h, k) if n != h])
     exploded = df[["_row_id", "date_of_transfer"]].join(neighbor_ids.rename("neighbor_hex"))
     exploded = exploded.explode("neighbor_hex").sort_values("date_of_transfer")
 
     merged = pd.merge_asof(exploded, neighbor_lookup, on="date_of_transfer", by="neighbor_hex", direction="backward")
     lag = merged.groupby("_row_id")["neighbor_price"].mean()
-    df["hex_neighbor_lag"] = df["_row_id"].map(lag)
-    df["hex_neighbor_lag"] = df["hex_neighbor_lag"].fillna(df["hex_trailing_price"])
+    df[col_name] = df["_row_id"].map(lag)
+    df[col_name] = df[col_name].fillna(df["hex_trailing_price"])
     return df.drop(columns="_row_id")
+
+
+MULTI_RES_RESOLUTIONS = (9,)  # alongside the primary res 8 -- finer local trend. res 7 (coarser)
+# and a k=2 neighbor ring were also tried and measured (evaluate_cv ablation) but added
+# nothing once res 9 was in, so they were dropped rather than carried as unused features
+
+
+def add_multi_res_hex_ids(df: pd.DataFrame, resolutions=MULTI_RES_RESOLUTIONS) -> pd.DataFrame:
+    for res in resolutions:
+        df[f"hex{res}_id"] = [h3.latlng_to_cell(lat, lon, res) for lat, lon in zip(df["lat"], df["long"])]
+    return df
+
+
+def add_multi_res_trailing_price(df: pd.DataFrame, resolutions=MULTI_RES_RESOLUTIONS) -> pd.DataFrame:
+    # same trailing-window, strictly-prior discipline as add_hex_trailing_stats, just at
+    # coarser/finer hex sizes -- res 8 already carries the primary price/count/neighbor-lag
+    citywide_price = df.set_index("date_of_transfer")["price"].rolling(TRAILING_WINDOW, closed="left").median()
+    citywide_price.index = df.index
+
+    for res in resolutions:
+        hex_col, price_col = f"hex{res}_id", f"hex{res}_trailing_price"
+        rolled = (
+            df.set_index("date_of_transfer")
+            .groupby(hex_col)["price"]
+            .rolling(TRAILING_WINDOW, closed="left")
+            .median()
+            .reset_index()
+            .drop_duplicates(subset=[hex_col, "date_of_transfer"])
+            .rename(columns={"price": price_col})
+        )
+        df = df.merge(rolled, on=[hex_col, "date_of_transfer"], how="left")
+        df[price_col] = df[price_col].fillna(citywide_price)
+
+    # dropping res-8 cold-start rows upstream can expose a fresh "first ever row" with no
+    # citywide history of its own -- same genuine-cold-start rule, drop rather than fabricate
+    price_cols = [f"hex{res}_trailing_price" for res in resolutions]
+    return df.dropna(subset=price_cols).reset_index(drop=True)
 
 
 def add_paon_named_flag(df: pd.DataFrame) -> pd.DataFrame:
@@ -133,12 +170,53 @@ def add_street_shrunk_price(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=["_street_key", "_street_mean", "_street_count"])
 
 
+HEX_TARGET_ENCODING_K = 20.0  # smoothing constant -- thin hexes lean harder on the citywide mean
+
+
+def add_hex_target_encoding(df: pd.DataFrame, smoothing_k: float = HEX_TARGET_ENCODING_K) -> pd.DataFrame:
+    # deliberately different from hex_trailing_price: expanding (all strictly-prior history,
+    # not a 365D window) captures long-run price tier rather than recent momentum, and
+    # count-weighted shrinkage toward the citywide mean denoises thin hexes instead of
+    # hex_trailing_price's hard cutover (raw stat regardless of n, or full citywide if n=0)
+    df = df.sort_values("date_of_transfer").reset_index(drop=True)
+    df["_log_price"] = np.log10(df["price"])
+    span_days = (df["date_of_transfer"].max() - df["date_of_transfer"].min()).days + 1
+    expanding_window = f"{span_days}D"
+
+    rolled = (
+        df.set_index("date_of_transfer")
+        .groupby("hex_id")["_log_price"]
+        .rolling(expanding_window, closed="left")
+        .agg(["mean", "count"])
+        .reset_index()
+        .drop_duplicates(subset=["hex_id", "date_of_transfer"])
+        .rename(columns={"mean": "_hex_expanding_mean", "count": "_hex_expanding_count"})
+    )
+    df = df.merge(rolled, on=["hex_id", "date_of_transfer"], how="left")
+
+    citywide_mean = df.set_index("date_of_transfer")["_log_price"].rolling(expanding_window, closed="left").mean()
+    citywide_mean.index = df.index
+    df["_hex_expanding_mean"] = df["_hex_expanding_mean"].fillna(citywide_mean)
+    df["_hex_expanding_count"] = df["_hex_expanding_count"].fillna(0)
+    df["hex_target_encoded"] = (
+        df["_hex_expanding_count"] * df["_hex_expanding_mean"] + smoothing_k * citywide_mean
+    ) / (df["_hex_expanding_count"] + smoothing_k)
+
+    # same genuine-cold-start rule as everywhere else -- the very first row(s) have no
+    # citywide history either, nothing to shrink toward, drop rather than fabricate
+    df = df.dropna(subset=["hex_target_encoded"]).reset_index(drop=True)
+    return df.drop(columns=["_log_price", "_hex_expanding_mean", "_hex_expanding_count"])
+
+
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_hex_id(df.copy())
+    df = add_multi_res_hex_ids(df)
     df = add_distance_to_centre(df)
     df = add_date_parts(df)
     df, trailing_lookup = add_hex_trailing_stats(df)
+    df = add_multi_res_trailing_price(df)
     df = add_neighbor_lag(df, trailing_lookup)
     df = add_paon_named_flag(df)
     df = add_street_shrunk_price(df)
+    df = add_hex_target_encoding(df)
     return df
