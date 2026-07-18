@@ -25,9 +25,15 @@ ADDRESS_NUMERIC = ["paon_is_named", "street_trailing_price"]
 # res 9 (finer local trend) measured as a standalone win via evaluate_cv ablation --
 # res 7 and a k=2 neighbor ring were also tried and dropped, see features.py
 MULTI_RES_NUMERIC = ["hex9_trailing_price"]
+# expanding-window, shrinkage-smoothed hex price level -- correlation with hex_trailing_price
+# is 0.81 (not redundant) with a real r2 lift (+0.0024), passes the ablation gate
+TARGET_ENC_NUMERIC = ["hex_target_encoded"]
 # accumulates through the improvement-batch phases -- compare_models/shap_summary track
-# "how good can the model get", fit_full_pipeline stays on the serving-safe subset
-RESEARCH_NUMERIC = BASELINE_NUMERIC + HEX_NUMERIC + ADDRESS_NUMERIC + MULTI_RES_NUMERIC
+# "how good can the model get". hex9/target-encoding only need a postcode (hex-level,
+# precomputable), so they're servable -- ADDRESS_NUMERIC needs a specific street/house a
+# postcode-only query doesn't have, so it stays research-only, excluded from serving
+RESEARCH_NUMERIC = BASELINE_NUMERIC + HEX_NUMERIC + ADDRESS_NUMERIC + MULTI_RES_NUMERIC + TARGET_ENC_NUMERIC
+SERVING_NUMERIC = BASELINE_NUMERIC + HEX_NUMERIC + MULTI_RES_NUMERIC + TARGET_ENC_NUMERIC
 TARGET = "price"
 MODEL_PATH = DATA_PROCESSED / "xgb_pipeline.joblib"
 
@@ -129,8 +135,55 @@ def tune_xgb(df: pd.DataFrame, numeric_cols: list[str] = RESEARCH_NUMERIC, n_ite
     return search.best_params_, -search.best_score_
 
 
+QUANTILE_ALPHA_LOWER, QUANTILE_ALPHA_UPPER = 0.1, 0.9  # 80% interval
+QUANTILE_LOWER_PATH = DATA_PROCESSED / "xgb_quantile_lower.joblib"
+QUANTILE_UPPER_PATH = DATA_PROCESSED / "xgb_quantile_upper.joblib"
+
+
+def xgb_quantile_pipeline(numeric_cols: list[str], alpha: float) -> Pipeline:
+    pre = ColumnTransformer([
+        ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), CATEGORICAL),
+        ("num", "passthrough", numeric_cols),
+    ])
+    # native xgboost quantile regression -- two independent single-alpha models rather
+    # than one multi-quantile model, and rather than adding a mapie dependency for
+    # conformal calibration we don't need yet (see evaluate_interval_cv's coverage check)
+    model = XGBRegressor(
+        objective="reg:quantileerror", quantile_alpha=alpha,
+        n_estimators=300, max_depth=7, learning_rate=0.03, subsample=0.8, colsample_bytree=1.0,
+    )
+    return Pipeline([("pre", pre), ("model", model)])
+
+
+def fit_full_quantile_pipelines(df: pd.DataFrame) -> tuple[Pipeline, Pipeline]:
+    numeric_cols = SERVING_NUMERIC
+    X, y = make_frame(df, numeric_cols)
+    lower = xgb_quantile_pipeline(numeric_cols, QUANTILE_ALPHA_LOWER).fit(X, y)
+    upper = xgb_quantile_pipeline(numeric_cols, QUANTILE_ALPHA_UPPER).fit(X, y)
+    return lower, upper
+
+
+def evaluate_interval_cv(df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, numeric_cols: list[str]) -> dict:
+    # coverage alone is gameable by a too-wide interval, width alone says nothing about
+    # correctness -- report both, computed the same spatial-cv way as everything else
+    coverages, widths = [], []
+    for train_idx, test_idx in spatial_group_kfold(df):
+        lo_pipe = xgb_quantile_pipeline(numeric_cols, QUANTILE_ALPHA_LOWER).fit(X.iloc[train_idx], y.iloc[train_idx])
+        hi_pipe = xgb_quantile_pipeline(numeric_cols, QUANTILE_ALPHA_UPPER).fit(X.iloc[train_idx], y.iloc[train_idx])
+        lo, hi = lo_pipe.predict(X.iloc[test_idx]), hi_pipe.predict(X.iloc[test_idx])
+        lo, hi = np.minimum(lo, hi), np.maximum(lo, hi)
+        y_true = y.iloc[test_idx].values
+        coverages.append(((y_true >= lo) & (y_true <= hi)).mean())
+        widths.append((hi - lo).mean())
+    return {
+        "empirical_coverage": np.mean(coverages),
+        "target_coverage": QUANTILE_ALPHA_UPPER - QUANTILE_ALPHA_LOWER,
+        "mean_interval_width_log10": np.mean(widths),
+    }
+
+
 def fit_full_pipeline(df: pd.DataFrame) -> Pipeline:
-    numeric_cols = BASELINE_NUMERIC + HEX_NUMERIC
+    numeric_cols = SERVING_NUMERIC
     X, y = make_frame(df, numeric_cols)
     pipe = xgb_pipeline(numeric_cols)
     pipe.fit(X, y)
@@ -149,12 +202,14 @@ def evaluate_cv(df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, pipeline_fn, nu
     return {"rmse": np.mean(rmses), "mae": np.mean(maes), "r2": np.mean(r2s)}
 
 
-def out_of_fold_residuals(df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, numeric_cols: list[str]) -> pd.Series:
+def out_of_fold_residuals(df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, numeric_cols: list[str], pipeline_fn=linear_pipeline) -> pd.Series:
     # residuals must come from held-out folds -- in-sample residuals from a fitted model
-    # understate autocorrelation because the model has already absorbed local structure
+    # understate autocorrelation because the model has already absorbed local structure.
+    # defaults to linear (moran_before_after's fixed diagnostic model), but any pipeline_fn
+    # works -- e.g. xgb_pipeline, to check the actual best model's residual autocorrelation
     resid = pd.Series(index=X.index, dtype=float)
     for train_idx, test_idx in spatial_group_kfold(df):
-        pipe = linear_pipeline(numeric_cols)
+        pipe = pipeline_fn(numeric_cols)
         pipe.fit(X.iloc[train_idx], y.iloc[train_idx])
         pred = pipe.predict(X.iloc[test_idx])
         resid.iloc[test_idx] = y.iloc[test_idx].values - pred
