@@ -17,6 +17,12 @@ from src.spatial_diagnostics import morans_i_on_residuals, spatial_group_kfold
 CATEGORICAL = ["property_type", "old_new", "duration"]
 BASELINE_NUMERIC = ["dist_to_centre_km", "sale_year", "sale_month_sin", "sale_month_cos", "sdlt_rush"]
 HEX_NUMERIC = ["hex_trailing_price", "hex_trailing_count", "hex_neighbor_lag"]
+# needs a specific street/house, not just a postcode -- research/evaluation only for now,
+# not wired into fit_full_pipeline/predict.py until the final feature set is settled
+ADDRESS_NUMERIC = ["paon_is_named", "street_trailing_price"]
+# accumulates through the improvement-batch phases -- compare_models/shap_summary track
+# "how good can the model get", fit_full_pipeline stays on the serving-safe subset
+RESEARCH_NUMERIC = BASELINE_NUMERIC + HEX_NUMERIC + ADDRESS_NUMERIC
 TARGET = "price"
 MODEL_PATH = DATA_PROCESSED / "xgb_pipeline.joblib"
 
@@ -63,7 +69,7 @@ def gam_pipeline(numeric_cols: list[str]) -> Pipeline:
     # coarser smoothing on sale_year (not spatial, no reason to expect wiggle), plain
     # linear terms for the sin/cos pair and the binary sdlt flag -- a sinusoid pair is
     # already the smooth shape, and a 0/1 flag has nothing to smooth
-    linear_cols = ("sale_month_sin", "sale_month_cos", "sdlt_rush")
+    linear_cols = ("sale_month_sin", "sale_month_cos", "sdlt_rush", "paon_is_named")
     terms = None
     for i in range(n_cat):
         terms = f(i) if terms is None else terms + f(i)
@@ -113,7 +119,7 @@ def out_of_fold_residuals(df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, numer
 
 
 def compare_models(df: pd.DataFrame) -> pd.DataFrame:
-    numeric_cols = BASELINE_NUMERIC + HEX_NUMERIC
+    numeric_cols = RESEARCH_NUMERIC
     X, y = make_frame(df, numeric_cols)
     results = {
         "linear": evaluate_cv(df, X, y, linear_pipeline, numeric_cols),
@@ -140,7 +146,7 @@ def moran_before_after(df: pd.DataFrame) -> pd.DataFrame:
 def shap_summary(df: pd.DataFrame, sample_size: int = 5000):
     import shap
 
-    numeric_cols = BASELINE_NUMERIC + HEX_NUMERIC
+    numeric_cols = RESEARCH_NUMERIC
     X, y = make_frame(df, numeric_cols)
     pipe = xgb_pipeline(numeric_cols)
     pipe.fit(X, y)

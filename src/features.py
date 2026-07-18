@@ -90,10 +90,55 @@ def add_neighbor_lag(df: pd.DataFrame, trailing_lookup: pd.DataFrame) -> pd.Data
     return df.drop(columns="_row_id")
 
 
+def add_paon_named_flag(df: pd.DataFrame) -> pd.DataFrame:
+    # a named property ("THE OLD RECTORY") vs a plain house number is a free signal
+    # correlated with age/prestige, sitting unused in a column no feature touched before
+    df["paon_is_named"] = df["paon"].str.contains(r"[A-Za-z]{3,}", regex=True, na=False).astype(int)
+    return df
+
+
+STREET_SHRINKAGE_K = 8  # eda notebook: median 4 sales/street over the whole window -- thin
+# streets should lean hard on the hex price, not be trusted on a handful of their own sales
+
+
+def add_street_shrunk_price(df: pd.DataFrame) -> pd.DataFrame:
+    # street names repeat across boroughs ("HIGH STREET" everywhere) -- must key on
+    # street+district together or unrelated streets silently get merged into one series
+    df = df.sort_values("date_of_transfer").reset_index(drop=True)
+    df["_street_key"] = df["street"].astype(str) + "||" + df["district"].astype(str)
+
+    # expanding (all strictly-prior history), not the 365D hex window -- a street sees a
+    # handful of sales across the whole 3-year span, a 1-year window leaves nothing to use
+    span_days = (df["date_of_transfer"].max() - df["date_of_transfer"].min()).days + 1
+    expanding_window = f"{span_days}D"
+
+    rolled = (
+        df.set_index("date_of_transfer")
+        .groupby("_street_key")["price"]
+        .rolling(expanding_window, closed="left")
+        .agg(["mean", "count"])
+        .reset_index()
+        .drop_duplicates(subset=["_street_key", "date_of_transfer"])
+        .rename(columns={"mean": "_street_mean", "count": "_street_count"})
+    )
+    df = df.merge(rolled, on=["_street_key", "date_of_transfer"], how="left")
+
+    # cold-start street (no prior sale on it at all): full weight on the hex price
+    df["_street_mean"] = df["_street_mean"].fillna(df["hex_trailing_price"])
+    df["_street_count"] = df["_street_count"].fillna(0)
+    df["street_trailing_price"] = (
+        df["_street_count"] * df["_street_mean"] + STREET_SHRINKAGE_K * df["hex_trailing_price"]
+    ) / (df["_street_count"] + STREET_SHRINKAGE_K)
+
+    return df.drop(columns=["_street_key", "_street_mean", "_street_count"])
+
+
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_hex_id(df.copy())
     df = add_distance_to_centre(df)
     df = add_date_parts(df)
     df, trailing_lookup = add_hex_trailing_stats(df)
     df = add_neighbor_lag(df, trailing_lookup)
+    df = add_paon_named_flag(df)
+    df = add_street_shrunk_price(df)
     return df
