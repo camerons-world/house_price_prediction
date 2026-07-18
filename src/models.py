@@ -18,6 +18,7 @@ CATEGORICAL = ["property_type", "old_new", "duration"]
 BASELINE_NUMERIC = ["dist_to_centre_km", "sale_year", "sale_month"]
 HEX_NUMERIC = ["hex_trailing_price", "hex_trailing_count", "hex_neighbor_lag"]
 TARGET = "price"
+MODEL_PATH = DATA_PROCESSED / "xgb_pipeline.joblib"
 
 
 def load_dataset() -> pd.DataFrame:
@@ -68,6 +69,14 @@ def gam_pipeline(numeric_cols: list[str]) -> Pipeline:
         terms = terms + (s(idx) if col not in ("sale_year", "sale_month") else s(idx, n_splines=6))
     gam = LinearGAM(terms)
     return Pipeline([("pre", pre), ("model", gam)])
+
+
+def fit_full_pipeline(df: pd.DataFrame) -> Pipeline:
+    numeric_cols = BASELINE_NUMERIC + HEX_NUMERIC
+    X, y = make_frame(df, numeric_cols)
+    pipe = xgb_pipeline(numeric_cols)
+    pipe.fit(X, y)
+    return pipe
 
 
 def evaluate_cv(df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, pipeline_fn, numeric_cols: list[str]) -> dict:
