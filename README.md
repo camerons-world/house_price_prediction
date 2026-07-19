@@ -52,14 +52,6 @@ Hex features roughly halve residual spatial autocorrelation on their own, and th
 
 SHAP on the XGBoost model puts tenure (leasehold vs freehold), distance to centre, and property type at the top, with the street-level and hex target-encoded features close behind.
 
-### Honest scoring
-
-If I had to put a number on this: 6 out of 10 as an actual price-prediction tool, 8 or 9 out of 10 as an example of doing this kind of problem properly. Those feel like genuinely different questions to me.
-
-The process earns the higher mark. Leakage-safe features that are actually tested rather than just asserted, real spatial CV instead of the random k-fold that would have made everything look better than it is, diagnostics I measured instead of assumed, and a negative result (GWR) I wrote up instead of hiding.
-
-The 6 is about the actual accuracy. An R² around 0.64-0.67 and a typical error of 25-30% of price is a real gap from something I'd hand a homeowner as a number to trust. And the biggest reason for that gap isn't something more feature engineering on this dataset fixes: there's no property condition, floor area, or renovation state anywhere in Land Registry data, and that's probably the single biggest thing missing for predicting an individual property, as opposed to "a type of property in an area," which this does reasonably well.
-
 ## Limitations
 
 - Residual spatial autocorrelation is reduced, not gone. There's location signal here (condition, exact street, school catchment) this data just doesn't have, and GWR didn't close what's left.
