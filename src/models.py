@@ -18,12 +18,12 @@ from src.spatial_diagnostics import morans_i_on_residuals, spatial_group_kfold
 
 CATEGORICAL = ["property_type", "old_new", "duration"]
 BASELINE_NUMERIC = ["dist_to_centre_km", "sale_year", "sale_month_sin", "sale_month_cos", "sdlt_rush"]
-HEX_NUMERIC = ["hex_trailing_price", "hex_trailing_count", "hex_neighbor_lag"]
+HEX_NUMERIC = ["hex_trailing_price", "hex_trailing_count", "hex_neighbour_lag"]
 # needs a specific street/house, not just a postcode -- research/evaluation only for now,
 # not wired into fit_full_pipeline/predict.py until the final feature set is settled
 ADDRESS_NUMERIC = ["paon_is_named", "street_trailing_price"]
 # res 9 (finer local trend) measured as a standalone win via evaluate_cv ablation --
-# res 7 and a k=2 neighbor ring were also tried and dropped, see features.py
+# res 7 and a k=2 neighbour ring were also tried and dropped, see features.py
 MULTI_RES_NUMERIC = ["hex9_trailing_price"]
 # expanding-window, shrinkage-smoothed hex price level -- correlation with hex_trailing_price
 # is 0.81 (not redundant) with a real r2 lift (+0.0024), passes the ablation gate

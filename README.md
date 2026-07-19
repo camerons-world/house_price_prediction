@@ -1,6 +1,7 @@
 # UK House Price Prediction
 
 Predicting UK house prices, with a deliberate investigation into spatial autocorrelation (nearby sales aren't independent observations) and time-based leakage in the underlying data.
+
 ## Aims
 
 Two things, one practical and one methodological:
@@ -14,7 +15,7 @@ Two things, one practical and one methodological:
 - **EDA** (`01_eda.ipynb`): missingness, price distribution, a real dateable anomaly in the data (the March/April 2025 stamp-duty rush), property attribute breakdowns, and the empirical justification for the H3 hex resolution used throughout.
 - **Core spatial features** (`features.py`): H3 hex indexing (res 8, plus a finer res 9), distance-to-centre, hex-level trailing price/count, a neighbour-hex spatial lag, and a shrinkage-smoothed hex target encoding -- all computed strictly from sales *before* the one being predicted, never over the whole dataset then split.
 - **A documented improvement audit** (`PLAN.md`): eight further feature/model changes tried and measured against the same evaluation, within the same data boundary (no new external datasets). Kept: multi-resolution hex features, hex target encoding, street/named-property features (research-only, see Limitations), XGBoost tuning, LightGBM, prediction intervals. Dropped after measuring no real lift: a coarser hex resolution, a wider neighbour ring, and -- the most involved experiment -- geographically weighted regression (GWR), documented as a negative result rather than silently discarded.
-- **Modelling** (`02_modeling.ipynb`): four models compared (linear, GAM, XGBoost, LightGBM) under 5-fold spatial block CV, Moran's I on residuals before/after hex features *and* for the actual best model, SHAP feature importance, predicted-vs-actual scatter plots, and a spatial choropleth of residuals (baseline vs. full model) to make the autocorrelation story visible, not just a statistic.
+- **Modelling** (`02_modelling.ipynb`): four models compared (linear, GAM, XGBoost, LightGBM) under 5-fold spatial block CV, Moran's I on residuals before/after hex features *and* for the actual best model, SHAP feature importance, predicted-vs-actual scatter plots, and a spatial choropleth of residuals (baseline vs. full model) to make the autocorrelation story visible, not just a statistic.
 - **A working tool** (`predict.py`, walked through in `03_predict.ipynb`): postcode + property type + tenure in, a predicted price *and* an 80% prediction interval out, via a CLI (`python -m src.predict`). Point estimate plus interval, not a bare number -- interval coverage is measured, not assumed.
 
 ## Hex-price assumption
@@ -85,7 +86,7 @@ pip install -r requirements.txt
 ```
 ├── data/            raw/ and processed/ (gitignored -- incl. trained model/quantile
 │                    models and hex snapshots saved by `python -m src.predict --train`)
-├── notebooks/       EDA, modeling, and the postcode predictor walkthrough
+├── notebooks/       EDA, modelling, and the postcode predictor walkthrough
 ├── src/
 │   ├── data_prep.py             Land Registry + ONSPD join
 │   ├── features.py              hex indexing, time-based aggregates, address features

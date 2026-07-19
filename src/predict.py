@@ -29,12 +29,12 @@ def build_hex_snapshot(df: pd.DataFrame, reference_date) -> tuple[pd.DataFrame, 
 
     lookup = snapshot["hex_trailing_price"]
 
-    def neighbor_avg(h):
-        neighbors = [n for n in h3.grid_disk(h, 1) if n != h]
-        vals = lookup.reindex(neighbors).dropna()
+    def neighbour_avg(h):
+        neighbours = [n for n in h3.grid_disk(h, 1) if n != h]
+        vals = lookup.reindex(neighbours).dropna()
         return vals.mean() if len(vals) else lookup[h]
 
-    snapshot["hex_neighbor_lag"] = [neighbor_avg(h) for h in snapshot.index]
+    snapshot["hex_neighbour_lag"] = [neighbour_avg(h) for h in snapshot.index]
 
     # target encoding is a single snapshot value per hex too -- same expanding-window +
     # shrinkage logic as add_hex_target_encoding, anchored at the fixed reference date
@@ -106,13 +106,13 @@ def predict_price(postcode: str, property_type: str, duration: str, old_new: str
     if hex_id in snapshot.index:
         hex_trailing_price = snapshot.loc[hex_id, "hex_trailing_price"]
         hex_trailing_count = snapshot.loc[hex_id, "hex_trailing_count"]
-        hex_neighbor_lag = snapshot.loc[hex_id, "hex_neighbor_lag"]
+        hex_neighbour_lag = snapshot.loc[hex_id, "hex_neighbour_lag"]
         hex_target_encoded = snapshot.loc[hex_id, "hex_target_encoded"]
     else:
         # cold-start hex, no recent sales at all -- same citywide fallback rule as training
         hex_trailing_price = meta["citywide_trailing_price"]
         hex_trailing_count = 0
-        hex_neighbor_lag = meta["citywide_trailing_price"]
+        hex_neighbour_lag = meta["citywide_trailing_price"]
         hex_target_encoded = meta["citywide_log_price_mean"]
 
     if hex9_id in hex9_snapshot.index:
@@ -132,7 +132,7 @@ def predict_price(postcode: str, property_type: str, duration: str, old_new: str
         "sdlt_rush": 0,  # reference date is always outside the mar/apr 2025 rush window
         "hex_trailing_price": hex_trailing_price,
         "hex_trailing_count": hex_trailing_count,
-        "hex_neighbor_lag": hex_neighbor_lag,
+        "hex_neighbour_lag": hex_neighbour_lag,
         "hex9_trailing_price": hex9_trailing_price,
         "hex_target_encoded": hex_target_encoded,
     }])

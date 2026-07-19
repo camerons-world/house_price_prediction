@@ -24,8 +24,8 @@ def spatial_group_kfold(df: pd.DataFrame, n_splits: int = 5):
 
 def hex_adjacency_weights(hex_ids: list[str]) -> W:
     present = set(hex_ids)
-    neighbors = {h: [n for n in h3.grid_disk(h, 1) if n != h and n in present] for h in present}
-    return W(neighbors)
+    neighbours = {h: [n for n in h3.grid_disk(h, 1) if n != h and n in present] for h in present}
+    return W(neighbours)
 
 
 def morans_i_on_residuals(df: pd.DataFrame, residual_col: str, hex_col: str = "hex_id") -> Moran:
