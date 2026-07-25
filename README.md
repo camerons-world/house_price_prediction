@@ -1,30 +1,28 @@
 # UK House Price Prediction
 
-I wanted to predict UK house prices, but do it properly -- actually check whether nearby sales are independent (they're not) and whether a "local price" feature is leaking future information into the past (an easy trap, and one most write-ups on this kind of problem just don't bother with).
+Predicting UK house prices -- actually checking whether nearby sales are independent (they're not) and whether a "local price" feature leaks future information into the past (an easy trap most write-ups on this kind of problem skip).
 
 ## Aims
 
-There were two things I wanted out of this:
-
-1. Predict residential sale price for a bounded problem -- Greater London, 2023 to 2025 -- built as a lightweight AVM (automated valuation model).
-2. Actually test the two shortcuts everyone takes in this kind of problem, rather than just assuming they're fine. Nearby sales aren't independent observations, so random k-fold CV quietly overstates how good a model is by leaking neighbours between train and test. And a "local price" feature is trivially easy to leak across time if you compute it over the whole dataset before splitting it. I wanted both of these measured, not just avoided by convention -- see the Moran's I results below, and the leakage rule enforced in `features.py`.
+1. Predict residential sale price for a bounded problem -- Greater London, 2023 to 2025 -- as a lightweight AVM (automated valuation model).
+2. Measure the two shortcuts everyone takes here instead of assuming they're fine: random k-fold CV leaks neighbouring sales between train and test, and a "local price" feature is trivially easy to leak across time if computed over the whole dataset before splitting. See the Moran's I results below and the leakage rule enforced in `features.py`.
 
 ## What's been done
 
-- Data comes from Land Registry Price Paid records joined to ONS postcode coordinates (`data_prep.py`), filtered down to residential arm's-length sales and outlier-trimmed.
-- The EDA (`01_eda.ipynb`) covers missingness, price distribution, and a genuinely interesting find: a real, dateable anomaly from the March/April 2025 stamp-duty rush. Also property attribute breakdowns and the reasoning behind the H3 hex resolution I settled on.
-- Core spatial features (`features.py`): H3 hex indexing at two resolutions, distance to centre, hex-level trailing price and count, a neighbour-hex spatial lag, and a shrinkage-smoothed hex target encoding. All of it computed strictly from sales *before* the one being predicted, never over the whole dataset and split afterwards.
-- I ran a whole documented improvement audit -- eight further feature and model ideas, each measured against the same evaluation, staying within the same data boundary (no new external datasets). Some of it stuck: multi-resolution hex features, hex target encoding, street/named-property features (though those turned out research-only, more on that below), a tuned XGBoost, LightGBM, prediction intervals. Some of it didn't: a coarser hex resolution, a wider neighbour ring, and, the one that took the most actual work, geographically weighted regression. I wrote that result up anyway instead of quietly dropping it, since it didn't help.
-- The modelling notebook (`02_modelling.ipynb`) compares four models -- linear, GAM, XGBoost, LightGBM -- under 5-fold spatial block CV, checks Moran's I on residuals before and after the hex features (and again for the actual best model), runs SHAP, and has predicted-vs-actual scatter plots plus a spatial map of residuals, so the autocorrelation story is something you can see rather than just a number you have to trust.
-- There's a working tool too (`predict.py`, walked through in `03_predict.ipynb`): give it a postcode, property type, and tenure, and it gives back a predicted price and an 80% interval, via a CLI. I wanted a range back, not a bare number, and I checked whether that interval's coverage actually holds up rather than assuming it does.
+- Data: Land Registry Price Paid records joined to ONS postcode coordinates (`data_prep.py`), filtered to residential arm's-length sales, outlier-trimmed.
+- EDA (`01_eda.ipynb`): missingness, price distribution, a dateable anomaly from the March/April 2025 stamp-duty rush, property attribute breakdowns, and the reasoning behind the H3 hex resolution.
+- Spatial features (`features.py`): H3 hex indexing at two resolutions, distance to centre, hex-level trailing price/count, a neighbour-hex spatial lag, and a shrinkage-smoothed hex target encoding -- all computed strictly from sales *before* the one being predicted.
+- A documented improvement audit -- eight further feature/model ideas measured against the same evaluation. Kept: multi-resolution hex features, hex target encoding, street/named-property features (research-only, more below), tuned XGBoost, LightGBM, prediction intervals. Dropped: a coarser hex resolution, a wider neighbour ring, and geographically weighted regression -- written up anyway since it didn't help.
+- Modelling (`02_modelling.ipynb`): linear, GAM, XGBoost, LightGBM under 5-fold spatial block CV, Moran's I on residuals before/after hex features, SHAP, predicted-vs-actual and residual maps.
+- A working tool (`predict.py`, walked through in `03_predict.ipynb`): postcode, property type, and tenure in, a predicted price and 80% interval out, via CLI. Interval coverage is checked, not assumed.
 
 ## Hex-price assumption
 
-The hex trailing price, count, and neighbour-lag features are standing in for whatever actually drives value in an area -- schools, transit, amenities, general desirability. The aggregate has already absorbed all of that, so there's no need to name every factor individually. That's the whole point of the H3/spatial-lag approach, and it's why I didn't bring in any external datasets for v1. It breaks down wherever what's different about one specific property or street matters more than the area around it, which is exactly why the street-level features in the improvement audit helped as much as they did, and it's what the limitations below are really about.
+The hex trailing price, count, and neighbour-lag features stand in for whatever actually drives value in an area -- schools, transit, amenities, general desirability -- without naming each factor individually. That's the point of the H3/spatial-lag approach, and why no external datasets were needed for v1. It breaks down wherever one specific property or street matters more than the area around it, which is exactly why the street-level features helped as much as they did (see limitations).
 
 ## Performance
 
-I track two feature sets separately (`src/models.py`): a research set with everything that measurably helps, and a serving set that drops street/address-level features, since `predict.py` only ever gets a postcode, not a specific house.
+Two feature sets, tracked separately (`src/models.py`): a research set with everything that measurably helps, and a serving set that drops street/address-level features, since `predict.py` only ever gets a postcode.
 
 5-fold spatial block CV, log10(price), research feature set:
 
@@ -35,7 +33,7 @@ I track two feature sets separately (`src/models.py`): a research set with every
 | XGBoost  | 0.147 | 0.105 | 0.668 |
 | LightGBM | 0.147 | 0.106 | 0.667 |
 
-The serving feature set (XGBoost, no address-level features) comes in at RMSE 0.153, MAE 0.110, R² 0.638. That's what `predict.py` actually runs.
+Serving feature set (XGBoost, no address-level features): RMSE 0.153, MAE 0.110, R² 0.638 -- what `predict.py` actually runs.
 
 Moran's I on out-of-fold residuals (hex-level, k=1 ring weights):
 
@@ -46,32 +44,32 @@ Moran's I on out-of-fold residuals (hex-level, k=1 ring weights):
 | full serving model residuals (XGBoost, postcode-only features)     | 0.261     | 0.001   |
 | full research model residuals (XGBoost, incl. street features)     | 0.244     | 0.001   |
 
-Hex features roughly halve residual spatial autocorrelation on their own, and the full feature set with XGBoost cuts it further, down to about a third of where it started. It's still significant at p=0.001 though, so there's real spatial structure left over. I did try to close that gap with GWR, and it didn't clear the bar I'd set for keeping it.
+Hex features roughly halve residual spatial autocorrelation on their own; the full feature set with XGBoost cuts it to about a third of where it started. Still significant at p=0.001, so real spatial structure remains -- GWR didn't close that gap enough to justify keeping it.
 
-`predict.py` also returns an 80% prediction interval, from two extra XGBoost quantile models. I measured the actual coverage on the same spatial CV and got about 78%, close enough to the 80% target that a heavier conformal-calibration setup didn't feel necessary.
+`predict.py`'s 80% prediction interval (two XGBoost quantile models) measures about 78% actual coverage on the same spatial CV -- close enough that a heavier conformal-calibration setup didn't feel necessary.
 
-SHAP on the XGBoost model puts tenure (leasehold vs freehold), distance to centre, and property type at the top, with the street-level and hex target-encoded features close behind.
+SHAP on the XGBoost model puts tenure (leasehold vs freehold), distance to centre, and property type at the top, with street-level and hex target-encoded features close behind.
 
 ## Limitations
 
-- Residual spatial autocorrelation is reduced, not gone. There's location signal here (condition, exact street, school catchment) this data just doesn't have, and GWR didn't close what's left.
-- No property condition, renovation, or floor-area data anywhere -- Price Paid Data doesn't carry it. Probably the single biggest ceiling on accuracy in this project.
-- Street-level and named-property signal clearly helps (research model, R² 0.607 to 0.656 on its own) but it's not in the served model, since a postcode alone doesn't tell you the street or house.
-- One region, one time window: Greater London, 2023 to 2025. No idea whether any of this holds up elsewhere without refitting the hex features on local data.
-- The hex-price proxy assumes the local aggregate is a decent stand-in for whatever's actually driving value -- schools, transit, amenities, general desirability. It falls down wherever what's different within a hex matters more than the hex itself.
-- The prediction intervals are wide, often close to double the lower bound. That's an honest reflection of R² still sitting around 0.64, not a bug, but it's not a substitute for a real valuation either.
-- "Now" for the served model means the end of the training window, 31 December 2025, not real time. Prices aren't being refreshed live.
+- Residual spatial autocorrelation is reduced, not gone. Condition, exact street, and school catchment aren't in this data, and GWR didn't close what's left.
+- No property condition, renovation, or floor-area data -- Price Paid Data doesn't carry it. Probably the single biggest ceiling on accuracy here.
+- Street-level/named-property signal clearly helps (research model, R² 0.607 to 0.656 on its own) but isn't served, since a postcode alone doesn't give a street or house.
+- One region, one time window: Greater London, 2023 to 2025. No idea whether this holds up elsewhere without refitting the hex features.
+- The hex-price proxy assumes the local aggregate is a decent stand-in for what actually drives value. It falls down wherever one property differs from its hex more than the hex itself matters.
+- Prediction intervals are wide, often close to double the lower bound -- an honest reflection of R² around 0.64, not a bug, but not a substitute for a real valuation.
+- "Now" for the served model means the end of the training window, 31 December 2025, not real time.
 
 ## If this were picked back up to actually use
 
-Roughly the order I'd actually tackle these in, based on what the audit showed rather than a generic wishlist:
+Roughly the order I'd tackle these in, based on what the audit showed:
 
-1. Property condition and size data. Joining the UK's EPC register would give floor area and construction age, but it needs address-level matching against Land Registry records, a known and genuinely fiddly UK open-data linkage problem, not a simple join. Still the highest-leverage thing on this list -- nothing else closes the "individual property" gap the way real size and condition data would.
-2. Actually serve the street-level features. The single biggest measured win in the whole audit (R² +0.049) is sitting unused in production because `predict.py` only takes a postcode. Extending it to accept a specific address, falling back to postcode-only when one isn't given, would let the deployed tool use what's already been built.
-3. POI and amenity joins -- schools, transit (PTAL), crime, green space. I deliberately scoped these out of v1 to keep things bounded. I'd test them individually rather than as one big effort; distance to the nearest station is the cheapest to try, and the hex-price proxy is probably already absorbing a good chunk of the rest anyway.
-4. A retraining pipeline. Right now `--train` is a manual step and "now" is frozen at the last training date. Real use needs this on a schedule, plus some way to notice when the model's assumptions (like the SDLT-rush pattern) have gone stale.
-5. More than one region or time window, to actually find out whether any of this generalises, or whether the hex features need refitting from scratch every time.
-6. Revisit conformal calibration (`mapie`) for the prediction interval, but only if measured coverage ever drifts meaningfully below what I'm seeing now (~78%). Native XGBoost quantiles already clear the bar I set for keeping the interval this simple, so this isn't urgent.
+1. Property condition and size data. The UK's EPC register would give floor area and construction age, but needs fiddly address-level matching against Land Registry records. Still the highest-leverage gap on this list.
+2. Actually serve the street-level features. The audit's single biggest win (R² +0.049) sits unused because `predict.py` only takes a postcode -- extending it to accept an address, falling back to postcode-only, would let the deployed tool use what's already built.
+3. POI and amenity joins -- schools, transit (PTAL), crime, green space. Scoped out of v1 to keep things bounded; I'd test them individually, starting with distance to the nearest station.
+4. A retraining pipeline. `--train` is a manual step and "now" is frozen at the last training date -- real use needs this on a schedule, plus a way to notice when assumptions (like the SDLT-rush pattern) go stale.
+5. More than one region or time window, to find out whether any of this generalises.
+6. Revisit conformal calibration (`mapie`) for the prediction interval, but only if measured coverage drifts meaningfully below what I'm seeing now (~78%). Native XGBoost quantiles already clear the bar, so this isn't urgent.
 
 ## Setup
 
