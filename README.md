@@ -7,20 +7,20 @@ I wanted to predict UK house prices, but do it properly -- actually check whethe
 There were two things I wanted out of this:
 
 1. Predict residential sale price for a bounded problem -- Greater London, 2023 to 2025 -- built as a lightweight AVM (automated valuation model).
-2. Actually test the two shortcuts everyone takes in this kind of problem, rather than just assuming they're fine. Nearby sales aren't independent observations, so random k-fold CV quietly overstates how good a model is by leaking neighbours between train and test. And a "local price" feature is trivially easy to leak across time if you compute it over the whole dataset before splitting it. I wanted both of these measured, not just avoided by convention -- see the Moran's I results below, and the leakage rule in `PLAN.md`.
+2. Actually test the two shortcuts everyone takes in this kind of problem, rather than just assuming they're fine. Nearby sales aren't independent observations, so random k-fold CV quietly overstates how good a model is by leaking neighbours between train and test. And a "local price" feature is trivially easy to leak across time if you compute it over the whole dataset before splitting it. I wanted both of these measured, not just avoided by convention -- see the Moran's I results below, and the leakage rule enforced in `features.py`.
 
 ## What's been done
 
 - Data comes from Land Registry Price Paid records joined to ONS postcode coordinates (`data_prep.py`), filtered down to residential arm's-length sales and outlier-trimmed.
 - The EDA (`01_eda.ipynb`) covers missingness, price distribution, and a genuinely interesting find: a real, dateable anomaly from the March/April 2025 stamp-duty rush. Also property attribute breakdowns and the reasoning behind the H3 hex resolution I settled on.
 - Core spatial features (`features.py`): H3 hex indexing at two resolutions, distance to centre, hex-level trailing price and count, a neighbour-hex spatial lag, and a shrinkage-smoothed hex target encoding. All of it computed strictly from sales *before* the one being predicted, never over the whole dataset and split afterwards.
-- I ran a whole documented improvement audit (`PLAN.md`) -- eight further feature and model ideas, each measured against the same evaluation, staying within the same data boundary (no new external datasets). Some of it stuck: multi-resolution hex features, hex target encoding, street/named-property features (though those turned out research-only, more on that below), a tuned XGBoost, LightGBM, prediction intervals. Some of it didn't: a coarser hex resolution, a wider neighbour ring, and, the one that took the most actual work, geographically weighted regression. I wrote that result up anyway instead of quietly dropping it, since it didn't help.
+- I ran a whole documented improvement audit -- eight further feature and model ideas, each measured against the same evaluation, staying within the same data boundary (no new external datasets). Some of it stuck: multi-resolution hex features, hex target encoding, street/named-property features (though those turned out research-only, more on that below), a tuned XGBoost, LightGBM, prediction intervals. Some of it didn't: a coarser hex resolution, a wider neighbour ring, and, the one that took the most actual work, geographically weighted regression. I wrote that result up anyway instead of quietly dropping it, since it didn't help.
 - The modelling notebook (`02_modelling.ipynb`) compares four models -- linear, GAM, XGBoost, LightGBM -- under 5-fold spatial block CV, checks Moran's I on residuals before and after the hex features (and again for the actual best model), runs SHAP, and has predicted-vs-actual scatter plots plus a spatial map of residuals, so the autocorrelation story is something you can see rather than just a number you have to trust.
 - There's a working tool too (`predict.py`, walked through in `03_predict.ipynb`): give it a postcode, property type, and tenure, and it gives back a predicted price and an 80% interval, via a CLI. I wanted a range back, not a bare number, and I checked whether that interval's coverage actually holds up rather than assuming it does.
 
 ## Hex-price assumption
 
-The hex trailing price, count, and neighbour-lag features are standing in for whatever actually drives value in an area -- schools, transit, amenities, general desirability. The aggregate has already absorbed all of that, so there's no need to name every factor individually. That's the whole point of the H3/spatial-lag approach, and it's why I didn't bring in any external datasets for v1 (see `PLAN.md`). It breaks down wherever what's different about one specific property or street matters more than the area around it, which is exactly why the street-level features in the improvement audit helped as much as they did, and it's what the limitations below are really about.
+The hex trailing price, count, and neighbour-lag features are standing in for whatever actually drives value in an area -- schools, transit, amenities, general desirability. The aggregate has already absorbed all of that, so there's no need to name every factor individually. That's the whole point of the H3/spatial-lag approach, and it's why I didn't bring in any external datasets for v1. It breaks down wherever what's different about one specific property or street matters more than the area around it, which is exactly why the street-level features in the improvement audit helped as much as they did, and it's what the limitations below are really about.
 
 ## Performance
 
@@ -46,7 +46,7 @@ Moran's I on out-of-fold residuals (hex-level, k=1 ring weights):
 | full serving model residuals (XGBoost, postcode-only features)     | 0.261     | 0.001   |
 | full research model residuals (XGBoost, incl. street features)     | 0.244     | 0.001   |
 
-Hex features roughly halve residual spatial autocorrelation on their own, and the full feature set with XGBoost cuts it further, down to about a third of where it started. It's still significant at p=0.001 though, so there's real spatial structure left over. I did try to close that gap with GWR, and it didn't clear the bar I'd set for keeping it (see `PLAN.md`).
+Hex features roughly halve residual spatial autocorrelation on their own, and the full feature set with XGBoost cuts it further, down to about a third of where it started. It's still significant at p=0.001 though, so there's real spatial structure left over. I did try to close that gap with GWR, and it didn't clear the bar I'd set for keeping it.
 
 `predict.py` also returns an 80% prediction interval, from two extra XGBoost quantile models. I measured the actual coverage on the same spatial CV and got about 78%, close enough to the 80% target that a heavier conformal-calibration setup didn't feel necessary.
 
@@ -71,7 +71,7 @@ Roughly the order I'd actually tackle these in, based on what the audit showed r
 3. POI and amenity joins -- schools, transit (PTAL), crime, green space. I deliberately scoped these out of v1 to keep things bounded. I'd test them individually rather than as one big effort; distance to the nearest station is the cheapest to try, and the hex-price proxy is probably already absorbing a good chunk of the rest anyway.
 4. A retraining pipeline. Right now `--train` is a manual step and "now" is frozen at the last training date. Real use needs this on a schedule, plus some way to notice when the model's assumptions (like the SDLT-rush pattern) have gone stale.
 5. More than one region or time window, to actually find out whether any of this generalises, or whether the hex features need refitting from scratch every time.
-6. Revisit conformal calibration (`mapie`) for the prediction interval, but only if measured coverage ever drifts meaningfully below what I'm seeing now (~78%). Native XGBoost quantiles already clear the bar I set in `PLAN.md`, so this isn't urgent.
+6. Revisit conformal calibration (`mapie`) for the prediction interval, but only if measured coverage ever drifts meaningfully below what I'm seeing now (~78%). Native XGBoost quantiles already clear the bar I set for keeping the interval this simple, so this isn't urgent.
 
 ## Setup
 
@@ -93,6 +93,5 @@ pip install -r requirements.txt
 │   ├── models.py                 linear, GAM, xgboost, lightgbm, tuning, quantile models
 │   ├── spatial_diagnostics.py    Moran's I, spatial block CV
 │   └── predict.py                postcode -> price CLI/tool (`python -m src.predict`)
-├── tests/
-└── PLAN.md
+└── tests/
 ```

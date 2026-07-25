@@ -22,3 +22,6 @@ __pycache__/
 
 # Env / secrets
 .env
+
+# Local-only project notes
+PLAN.md

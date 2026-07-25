@@ -44,7 +44,7 @@ def add_date_parts(df: pd.DataFrame) -> pd.DataFrame:
 
 def add_hex_trailing_stats(df: pd.DataFrame) -> pd.DataFrame:
     # trailing = strictly-prior sales only (closed='left' excludes same-day ties too) --
-    # this is the leakage rule from PLAN.md, not optional
+    # this is the leakage rule, not optional
     df = df.sort_values("date_of_transfer").reset_index(drop=True)
 
     rolled = (
