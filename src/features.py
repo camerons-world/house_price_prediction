@@ -42,6 +42,12 @@ def add_date_parts(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _citywide_rolling(df: pd.DataFrame, column: str, window: str, agg: str) -> pd.Series:
+    stat = df.set_index("date_of_transfer")[column].rolling(window, closed="left").agg(agg)
+    stat.index = df.index
+    return stat
+
+
 def add_hex_trailing_stats(df: pd.DataFrame) -> pd.DataFrame:
     # trailing = strictly-prior sales only (closed='left' excludes same-day ties too) --
     # this is the leakage rule, not optional
@@ -60,8 +66,7 @@ def add_hex_trailing_stats(df: pd.DataFrame) -> pd.DataFrame:
 
     # cold-start hex (no prior sale in-window): price falls back to citywide median,
     # count is genuinely 0 -- citywide count is a different scale, not a valid fallback
-    citywide_price = df.set_index("date_of_transfer")["price"].rolling(TRAILING_WINDOW, closed="left").median()
-    citywide_price.index = df.index
+    citywide_price = _citywide_rolling(df, "price", TRAILING_WINDOW, "median")
     df["hex_trailing_price"] = df["hex_trailing_price"].fillna(citywide_price)
     df["hex_trailing_count"] = df["hex_trailing_count"].fillna(0)
 
@@ -104,8 +109,7 @@ def add_multi_res_hex_ids(df: pd.DataFrame, resolutions=MULTI_RES_RESOLUTIONS) -
 def add_multi_res_trailing_price(df: pd.DataFrame, resolutions=MULTI_RES_RESOLUTIONS) -> pd.DataFrame:
     # same trailing-window, strictly-prior discipline as add_hex_trailing_stats, just at
     # coarser/finer hex sizes -- res 8 already carries the primary price/count/neighbour-lag
-    citywide_price = df.set_index("date_of_transfer")["price"].rolling(TRAILING_WINDOW, closed="left").median()
-    citywide_price.index = df.index
+    citywide_price = _citywide_rolling(df, "price", TRAILING_WINDOW, "median")
 
     for res in resolutions:
         hex_col, price_col = f"hex{res}_id", f"hex{res}_trailing_price"
@@ -194,8 +198,7 @@ def add_hex_target_encoding(df: pd.DataFrame, smoothing_k: float = HEX_TARGET_EN
     )
     df = df.merge(rolled, on=["hex_id", "date_of_transfer"], how="left")
 
-    citywide_mean = df.set_index("date_of_transfer")["_log_price"].rolling(expanding_window, closed="left").mean()
-    citywide_mean.index = df.index
+    citywide_mean = _citywide_rolling(df, "_log_price", expanding_window, "mean")
     df["_hex_expanding_mean"] = df["_hex_expanding_mean"].fillna(citywide_mean)
     df["_hex_expanding_count"] = df["_hex_expanding_count"].fillna(0)
     df["hex_target_encoded"] = (
