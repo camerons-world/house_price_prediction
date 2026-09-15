@@ -14,9 +14,22 @@ ONSPD_PATH = DATA_RAW / "onspd" / "onspd_full.csv"
 
 PPD_URL_TEMPLATE = "https://price-paid-data.publicdata.landregistry.gov.uk/pp-{year}.csv"
 PPD_COLUMNS = [
-    "transaction_id", "price", "date_of_transfer", "postcode", "property_type",
-    "old_new", "duration", "paon", "saon", "street", "locality", "town_city",
-    "district", "county", "ppd_category_type", "record_status",
+    "transaction_id",
+    "price",
+    "date_of_transfer",
+    "postcode",
+    "property_type",
+    "old_new",
+    "duration",
+    "paon",
+    "saon",
+    "street",
+    "locality",
+    "town_city",
+    "district",
+    "county",
+    "ppd_category_type",
+    "record_status",
 ]
 
 # "greater london" = ppd's own county field, not a postcode-prefix guess
@@ -48,8 +61,12 @@ def load_price_paid(years: list[int] = YEARS) -> pd.DataFrame:
     for year in years:
         path = download_price_paid_year(year)
         df = pd.read_csv(
-            path, header=None, names=PPD_COLUMNS, quotechar='"',
-            dtype={"postcode": "string"}, parse_dates=["date_of_transfer"],
+            path,
+            header=None,
+            names=PPD_COLUMNS,
+            quotechar='"',
+            dtype={"postcode": "string"},
+            parse_dates=["date_of_transfer"],
         )
         frames.append(df[df["county"] == REGION_COUNTY])
     ppd = pd.concat(frames, ignore_index=True)
@@ -82,10 +99,14 @@ def build_dataset() -> pd.DataFrame:
 def filter_residential(df: pd.DataFrame) -> pd.DataFrame:
     # category b = repossessions/buy-to-lets/transfers, property_type o = commercial --
     # both carry non-residential price outliers (up to £793m), not what an avm targets
-    return df[(df["ppd_category_type"] == "A") & (df["property_type"] != "O")].reset_index(drop=True)
+    return df[(df["ppd_category_type"] == "A") & (df["property_type"] != "O")].reset_index(
+        drop=True
+    )
 
 
-def trim_price_outliers(df: pd.DataFrame, floor: int = 10_000, cap_quantile: float = 0.999) -> pd.DataFrame:
+def trim_price_outliers(
+    df: pd.DataFrame, floor: int = 10_000, cap_quantile: float = 0.999
+) -> pd.DataFrame:
     # even category a includes nominal/non-arm's-length transfers (e.g. price=1) and
     # occasional data-entry errors (a £540m terraced house) -- floor + top 0.1% trim
     cap = df["price"].quantile(cap_quantile)
