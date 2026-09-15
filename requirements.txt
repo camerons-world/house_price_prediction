@@ -1,18 +1,1 @@
-pandas
-numpy
-geopandas
-h3
-esda
-libpysal
-pygam
-scikit-learn
-xgboost
-shap
-folium
-plotly
-matplotlib
-seaborn
-jupyter
-pytest
-joblib
-lightgbm
+-e .
