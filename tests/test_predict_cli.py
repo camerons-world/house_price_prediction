@@ -6,9 +6,15 @@ from src import predict
 @pytest.fixture
 def mocks(monkeypatch):
     calls = {"predict": 0, "load": 0, "train": 0}
-    monkeypatch.setattr(predict, "predict_price", lambda *a, **k: calls.__setitem__("predict", calls["predict"] + 1))
-    monkeypatch.setattr(predict.joblib, "load", lambda *a, **k: calls.__setitem__("load", calls["load"] + 1))
-    monkeypatch.setattr(predict, "train_and_save", lambda: calls.__setitem__("train", calls["train"] + 1))
+    monkeypatch.setattr(
+        predict, "predict_price", lambda *a, **k: calls.__setitem__("predict", calls["predict"] + 1)
+    )
+    monkeypatch.setattr(
+        predict.joblib, "load", lambda *a, **k: calls.__setitem__("load", calls["load"] + 1)
+    )
+    monkeypatch.setattr(
+        predict, "train_and_save", lambda: calls.__setitem__("train", calls["train"] + 1)
+    )
     return calls
 
 

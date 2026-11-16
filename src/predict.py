@@ -28,9 +28,13 @@ def build_hex_snapshot(df: pd.DataFrame, reference_date) -> tuple[pd.DataFrame, 
     # this is what "current" local price looks like as of the end of the training data,
     # never real wall-clock today (the model never saw dates past this)
     window_start = reference_date - pd.Timedelta(TRAILING_WINDOW)
-    recent = df[(df["date_of_transfer"] >= window_start) & (df["date_of_transfer"] < reference_date)]
+    recent = df[
+        (df["date_of_transfer"] >= window_start) & (df["date_of_transfer"] < reference_date)
+    ]
 
-    snapshot = recent.groupby("hex_id")["price"].agg(hex_trailing_price="median", hex_trailing_count="count")
+    snapshot = recent.groupby("hex_id")["price"].agg(
+        hex_trailing_price="median", hex_trailing_count="count"
+    )
     citywide_price = recent["price"].median()
 
     lookup = snapshot["hex_trailing_price"]
@@ -67,7 +71,9 @@ def build_hex_snapshot(df: pd.DataFrame, reference_date) -> tuple[pd.DataFrame, 
 
 def build_hex9_snapshot(df: pd.DataFrame, reference_date) -> pd.DataFrame:
     window_start = reference_date - pd.Timedelta(TRAILING_WINDOW)
-    recent = df[(df["date_of_transfer"] >= window_start) & (df["date_of_transfer"] < reference_date)]
+    recent = df[
+        (df["date_of_transfer"] >= window_start) & (df["date_of_transfer"] < reference_date)
+    ]
     return recent.groupby("hex9_id")["price"].median().rename("hex9_trailing_price").reset_index()
 
 
@@ -96,17 +102,23 @@ def geocode_postcode(postcode: str) -> tuple[float, float]:
     return match.iloc[0]["lat"], match.iloc[0]["long"]
 
 
-def predict_price(postcode: str, property_type: str, duration: str, old_new: str = "N") -> tuple[float, float, float]:
+def predict_price(
+    postcode: str, property_type: str, duration: str, old_new: str = "N"
+) -> tuple[float, float, float]:
     lat, long = geocode_postcode(postcode)
     row = add_distance_to_centre(pd.DataFrame({"lat": [lat], "long": [long]}))
     if row.empty:
-        raise ValueError(f"postcode {postcode!r} is outside the trained region (too far from central london)")
+        raise ValueError(
+            f"postcode {postcode!r} is outside the trained region (too far from central london)"
+        )
     row = add_hex_id(row)
     row = add_multi_res_hex_ids(row, resolutions=(9,))
     hex_id, hex9_id = row["hex_id"].iloc[0], row["hex9_id"].iloc[0]
 
     snapshot = pd.read_csv(HEX_SNAPSHOT_PATH, dtype={"hex_id": "string"}).set_index("hex_id")
-    hex9_snapshot = pd.read_csv(HEX9_SNAPSHOT_PATH, dtype={"hex9_id": "string"}).set_index("hex9_id")
+    hex9_snapshot = pd.read_csv(HEX9_SNAPSHOT_PATH, dtype={"hex9_id": "string"}).set_index(
+        "hex9_id"
+    )
     meta = json.loads(SNAPSHOT_META_PATH.read_text())
 
     if hex_id in snapshot.index:
@@ -127,21 +139,25 @@ def predict_price(postcode: str, property_type: str, duration: str, old_new: str
         hex9_trailing_price = meta["citywide_trailing_price"]
 
     ref_month = meta["reference_month"]
-    features = pd.DataFrame([{
-        "property_type": property_type,
-        "old_new": old_new,
-        "duration": duration,
-        "dist_to_centre_km": row["dist_to_centre_km"].iloc[0],
-        "sale_year": meta["reference_year"],
-        "sale_month_sin": np.sin(2 * np.pi * ref_month / 12),
-        "sale_month_cos": np.cos(2 * np.pi * ref_month / 12),
-        "sdlt_rush": 0,  # reference date is always outside the mar/apr 2025 rush window
-        "hex_trailing_price": hex_trailing_price,
-        "hex_trailing_count": hex_trailing_count,
-        "hex_neighbour_lag": hex_neighbour_lag,
-        "hex9_trailing_price": hex9_trailing_price,
-        "hex_target_encoded": hex_target_encoded,
-    }])
+    features = pd.DataFrame(
+        [
+            {
+                "property_type": property_type,
+                "old_new": old_new,
+                "duration": duration,
+                "dist_to_centre_km": row["dist_to_centre_km"].iloc[0],
+                "sale_year": meta["reference_year"],
+                "sale_month_sin": np.sin(2 * np.pi * ref_month / 12),
+                "sale_month_cos": np.cos(2 * np.pi * ref_month / 12),
+                "sdlt_rush": 0,  # reference date is always outside the mar/apr 2025 rush window
+                "hex_trailing_price": hex_trailing_price,
+                "hex_trailing_count": hex_trailing_count,
+                "hex_neighbour_lag": hex_neighbour_lag,
+                "hex9_trailing_price": hex9_trailing_price,
+                "hex_target_encoded": hex_target_encoded,
+            }
+        ]
+    )
 
     pipe = joblib.load(models.MODEL_PATH)
     lower_pipe = joblib.load(models.QUANTILE_LOWER_PATH)
@@ -157,8 +173,12 @@ def predict_price(postcode: str, property_type: str, duration: str, old_new: str
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="predict a house price for a postcode + property type + tenure")
-    parser.add_argument("--train", action="store_true", help="fit the model and rebuild the hex snapshots")
+    parser = argparse.ArgumentParser(
+        description="predict a house price for a postcode + property type + tenure"
+    )
+    parser.add_argument(
+        "--train", action="store_true", help="fit the model and rebuild the hex snapshots"
+    )
     parser.add_argument("postcode", nargs="?")
     parser.add_argument("property_type", nargs="?", choices=["F", "S", "T", "D"])
     parser.add_argument("duration", nargs="?", choices=["F", "L"])
@@ -172,7 +192,9 @@ def main() -> None:
     if None in (args.postcode, args.property_type, args.duration):
         parser.error("postcode, property_type and duration are required unless --train is given")
 
-    point, lower, upper = predict_price(args.postcode, args.property_type, args.duration, args.old_new)
+    point, lower, upper = predict_price(
+        args.postcode, args.property_type, args.duration, args.old_new
+    )
     print(f"predicted price: £{point:,.0f} (80% interval: £{lower:,.0f} - £{upper:,.0f})")
 
 

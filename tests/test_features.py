@@ -5,11 +5,13 @@ from src.features import LONDON_CENTRE, add_distance_to_centre, add_hex_trailing
 
 
 def _sales(hex_id, dates, prices):
-    return pd.DataFrame({
-        "hex_id": [hex_id] * len(dates),
-        "date_of_transfer": pd.to_datetime(dates),
-        "price": prices,
-    })
+    return pd.DataFrame(
+        {
+            "hex_id": [hex_id] * len(dates),
+            "date_of_transfer": pd.to_datetime(dates),
+            "price": prices,
+        }
+    )
 
 
 def test_trailing_price_excludes_same_day_and_future_sales():
@@ -21,7 +23,9 @@ def test_trailing_price_excludes_same_day_and_future_sales():
     out, _ = add_hex_trailing_stats(df)
     last = out[out["date_of_transfer"] == "2023-06-01"].iloc[0]
     # same-day pair (jan 10) must not leak into a later trailing stat
-    assert last["hex_trailing_price"] == pytest.approx(pd.Series([100, 200, 999_999, 999_999]).median())
+    assert last["hex_trailing_price"] == pytest.approx(
+        pd.Series([100, 200, 999_999, 999_999]).median()
+    )
 
     jan10 = out[out["date_of_transfer"] == "2023-01-10"]
     # neither jan-10 row can see the other jan-10 sale (closed='left' excludes ties)

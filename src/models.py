@@ -17,7 +17,13 @@ from src.features import build_features
 from src.spatial_diagnostics import morans_i_on_residuals, spatial_group_kfold
 
 CATEGORICAL = ["property_type", "old_new", "duration"]
-BASELINE_NUMERIC = ["dist_to_centre_km", "sale_year", "sale_month_sin", "sale_month_cos", "sdlt_rush"]
+BASELINE_NUMERIC = [
+    "dist_to_centre_km",
+    "sale_year",
+    "sale_month_sin",
+    "sale_month_cos",
+    "sdlt_rush",
+]
 HEX_NUMERIC = ["hex_trailing_price", "hex_trailing_count", "hex_neighbour_lag"]
 # needs a specific street/house, not just a postcode -- research/evaluation only for now,
 # not wired into fit_full_pipeline/predict.py until the final feature set is settled
@@ -32,7 +38,9 @@ TARGET_ENC_NUMERIC = ["hex_target_encoded"]
 # "how good can the model get". hex9/target-encoding only need a postcode (hex-level,
 # precomputable), so they're servable -- ADDRESS_NUMERIC needs a specific street/house a
 # postcode-only query doesn't have, so it stays research-only, excluded from serving
-RESEARCH_NUMERIC = BASELINE_NUMERIC + HEX_NUMERIC + ADDRESS_NUMERIC + MULTI_RES_NUMERIC + TARGET_ENC_NUMERIC
+RESEARCH_NUMERIC = (
+    BASELINE_NUMERIC + HEX_NUMERIC + ADDRESS_NUMERIC + MULTI_RES_NUMERIC + TARGET_ENC_NUMERIC
+)
 SERVING_NUMERIC = BASELINE_NUMERIC + HEX_NUMERIC + MULTI_RES_NUMERIC + TARGET_ENC_NUMERIC
 TARGET = "price"
 MODEL_PATH = DATA_PROCESSED / "xgb_pipeline.joblib"
@@ -52,31 +60,43 @@ def make_frame(df: pd.DataFrame, numeric_cols: list[str]) -> tuple[pd.DataFrame,
 
 
 def linear_pipeline(numeric_cols: list[str]) -> Pipeline:
-    pre = ColumnTransformer([
-        ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), CATEGORICAL),
-        ("num", StandardScaler(), numeric_cols),
-    ])
+    pre = ColumnTransformer(
+        [
+            ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), CATEGORICAL),
+            ("num", StandardScaler(), numeric_cols),
+        ]
+    )
     return Pipeline([("pre", pre), ("model", LinearRegression())])
 
 
 def xgb_pipeline(numeric_cols: list[str]) -> Pipeline:
-    pre = ColumnTransformer([
-        ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), CATEGORICAL),
-        ("num", "passthrough", numeric_cols),
-    ])
+    pre = ColumnTransformer(
+        [
+            ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), CATEGORICAL),
+            ("num", "passthrough", numeric_cols),
+        ]
+    )
     # tuned via tune_xgb's spatial-cv randomized search -- marginal over the original
     # hand-picked values (rmse 0.1475 -> 0.1474), adopted anyway since it cost nothing
-    model = XGBRegressor(n_estimators=300, max_depth=7, learning_rate=0.03, subsample=0.8, colsample_bytree=1.0)
+    model = XGBRegressor(
+        n_estimators=300, max_depth=7, learning_rate=0.03, subsample=0.8, colsample_bytree=1.0
+    )
     return Pipeline([("pre", pre), ("model", model)])
 
 
 def gam_pipeline(numeric_cols: list[str]) -> Pipeline:
     # gam wants factors as ordinal-coded ints (f terms), not one-hot -- one-hot would
     # give each dummy its own smoothing penalty instead of a single per-feature term
-    pre = ColumnTransformer([
-        ("cat", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1), CATEGORICAL),
-        ("num", StandardScaler(), numeric_cols),
-    ])
+    pre = ColumnTransformer(
+        [
+            (
+                "cat",
+                OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1),
+                CATEGORICAL,
+            ),
+            ("num", StandardScaler(), numeric_cols),
+        ]
+    )
     n_cat = len(CATEGORICAL)
     # smooth terms on distance/hex location features, factor terms on property attrs,
     # coarser smoothing on sale_year (not spatial, no reason to expect wiggle), plain
@@ -104,17 +124,30 @@ def lgbm_pipeline(numeric_cols: list[str]) -> Pipeline:
     # "native" categorical splits need category-dtype columns preserved through the
     # pipeline, which ColumnTransformer's default array output doesn't keep. this forfeits
     # that specific advantage but is still a fair, working comparison against xgboost
-    pre = ColumnTransformer([
-        ("cat", OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1), CATEGORICAL),
-        ("num", "passthrough", numeric_cols),
-    ])
+    pre = ColumnTransformer(
+        [
+            (
+                "cat",
+                OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1),
+                CATEGORICAL,
+            ),
+            ("num", "passthrough", numeric_cols),
+        ]
+    )
     model = lgb.LGBMRegressor(
-        n_estimators=400, max_depth=5, learning_rate=0.05, subsample=0.8, colsample_bytree=0.8, verbosity=-1
+        n_estimators=400,
+        max_depth=5,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        verbosity=-1,
     )
     return Pipeline([("pre", pre), ("model", model)])
 
 
-def tune_xgb(df: pd.DataFrame, numeric_cols: list[str] = RESEARCH_NUMERIC, n_iter: int = 20) -> tuple[dict, float]:
+def tune_xgb(
+    df: pd.DataFrame, numeric_cols: list[str] = RESEARCH_NUMERIC, n_iter: int = 20
+) -> tuple[dict, float]:
     # xgb_pipeline's hyperparameters were hand-picked, never searched -- spatial_group_kfold
     # as the cv splitter here too, a plain k-fold search would leak the same way plain
     # k-fold evaluation would
@@ -128,8 +161,13 @@ def tune_xgb(df: pd.DataFrame, numeric_cols: list[str] = RESEARCH_NUMERIC, n_ite
     }
     cv = list(spatial_group_kfold(df, n_splits=5))
     search = RandomizedSearchCV(
-        xgb_pipeline(numeric_cols), param_dist, n_iter=n_iter, cv=cv,
-        scoring="neg_root_mean_squared_error", random_state=0, n_jobs=-1,
+        xgb_pipeline(numeric_cols),
+        param_dist,
+        n_iter=n_iter,
+        cv=cv,
+        scoring="neg_root_mean_squared_error",
+        random_state=0,
+        n_jobs=-1,
     )
     search.fit(X, y)
     return search.best_params_, -search.best_score_
@@ -141,16 +179,23 @@ QUANTILE_UPPER_PATH = DATA_PROCESSED / "xgb_quantile_upper.joblib"
 
 
 def xgb_quantile_pipeline(numeric_cols: list[str], alpha: float) -> Pipeline:
-    pre = ColumnTransformer([
-        ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), CATEGORICAL),
-        ("num", "passthrough", numeric_cols),
-    ])
+    pre = ColumnTransformer(
+        [
+            ("cat", OneHotEncoder(drop="first", handle_unknown="ignore"), CATEGORICAL),
+            ("num", "passthrough", numeric_cols),
+        ]
+    )
     # native xgboost quantile regression -- two independent single-alpha models rather
     # than one multi-quantile model, and rather than adding a mapie dependency for
     # conformal calibration we don't need yet (see evaluate_interval_cv's coverage check)
     model = XGBRegressor(
-        objective="reg:quantileerror", quantile_alpha=alpha,
-        n_estimators=300, max_depth=7, learning_rate=0.03, subsample=0.8, colsample_bytree=1.0,
+        objective="reg:quantileerror",
+        quantile_alpha=alpha,
+        n_estimators=300,
+        max_depth=7,
+        learning_rate=0.03,
+        subsample=0.8,
+        colsample_bytree=1.0,
     )
     return Pipeline([("pre", pre), ("model", model)])
 
@@ -163,13 +208,19 @@ def fit_full_quantile_pipelines(df: pd.DataFrame) -> tuple[Pipeline, Pipeline]:
     return lower, upper
 
 
-def evaluate_interval_cv(df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, numeric_cols: list[str]) -> dict:
+def evaluate_interval_cv(
+    df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, numeric_cols: list[str]
+) -> dict:
     # coverage alone is gameable by a too-wide interval, width alone says nothing about
     # correctness -- report both, computed the same spatial-cv way as everything else
     coverages, widths = [], []
     for train_idx, test_idx in spatial_group_kfold(df):
-        lo_pipe = xgb_quantile_pipeline(numeric_cols, QUANTILE_ALPHA_LOWER).fit(X.iloc[train_idx], y.iloc[train_idx])
-        hi_pipe = xgb_quantile_pipeline(numeric_cols, QUANTILE_ALPHA_UPPER).fit(X.iloc[train_idx], y.iloc[train_idx])
+        lo_pipe = xgb_quantile_pipeline(numeric_cols, QUANTILE_ALPHA_LOWER).fit(
+            X.iloc[train_idx], y.iloc[train_idx]
+        )
+        hi_pipe = xgb_quantile_pipeline(numeric_cols, QUANTILE_ALPHA_UPPER).fit(
+            X.iloc[train_idx], y.iloc[train_idx]
+        )
         lo, hi = lo_pipe.predict(X.iloc[test_idx]), hi_pipe.predict(X.iloc[test_idx])
         lo, hi = np.minimum(lo, hi), np.maximum(lo, hi)
         y_true = y.iloc[test_idx].values
@@ -190,7 +241,9 @@ def fit_full_pipeline(df: pd.DataFrame) -> Pipeline:
     return pipe
 
 
-def evaluate_cv(df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, pipeline_fn, numeric_cols: list[str]) -> dict:
+def evaluate_cv(
+    df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, pipeline_fn, numeric_cols: list[str]
+) -> dict:
     rmses, maes, r2s = [], [], []
     for train_idx, test_idx in spatial_group_kfold(df):
         pipe = pipeline_fn(numeric_cols)
@@ -202,7 +255,13 @@ def evaluate_cv(df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, pipeline_fn, nu
     return {"rmse": np.mean(rmses), "mae": np.mean(maes), "r2": np.mean(r2s)}
 
 
-def out_of_fold_residuals(df: pd.DataFrame, X: pd.DataFrame, y: pd.Series, numeric_cols: list[str], pipeline_fn=linear_pipeline) -> pd.Series:
+def out_of_fold_residuals(
+    df: pd.DataFrame,
+    X: pd.DataFrame,
+    y: pd.Series,
+    numeric_cols: list[str],
+    pipeline_fn=linear_pipeline,
+) -> pd.Series:
     # residuals must come from held-out folds -- in-sample residuals from a fitted model
     # understate autocorrelation because the model has already absorbed local structure.
     # defaults to linear (moran_before_after's fixed diagnostic model), but any pipeline_fn
@@ -252,11 +311,15 @@ def shap_summary(df: pd.DataFrame, sample_size: int = 5000):
 
     feature_names = pipe.named_steps["pre"].get_feature_names_out()
     X_transformed = pipe.named_steps["pre"].transform(X)
-    sample_idx = np.random.RandomState(0).choice(len(X_transformed), size=min(sample_size, len(X_transformed)), replace=False)
+    sample_idx = np.random.RandomState(0).choice(
+        len(X_transformed), size=min(sample_size, len(X_transformed)), replace=False
+    )
 
     explainer = shap.TreeExplainer(pipe.named_steps["model"])
     shap_values = explainer.shap_values(X_transformed[sample_idx])
-    return shap.Explanation(shap_values, feature_names=feature_names, data=X_transformed[sample_idx])
+    return shap.Explanation(
+        shap_values, feature_names=feature_names, data=X_transformed[sample_idx]
+    )
 
 
 def main() -> None:
