@@ -189,6 +189,9 @@ def main() -> None:
         train_and_save()
         return
 
+    if None in (args.postcode, args.property_type, args.duration):
+        parser.error("postcode, property_type and duration are required unless --train is given")
+
     point, lower, upper = predict_price(
         args.postcode, args.property_type, args.duration, args.old_new
     )
