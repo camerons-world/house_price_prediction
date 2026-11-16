@@ -10,7 +10,13 @@ import pandas as pd
 
 from src import models
 from src.data_prep import DATA_PROCESSED, _normalize_postcode, load_onspd_lookup
-from src.features import HEX_TARGET_ENCODING_K, TRAILING_WINDOW, add_distance_to_centre, add_hex_id, add_multi_res_hex_ids
+from src.features import (
+    HEX_TARGET_ENCODING_K,
+    TRAILING_WINDOW,
+    add_distance_to_centre,
+    add_hex_id,
+    add_multi_res_hex_ids,
+)
 
 HEX_SNAPSHOT_PATH = DATA_PROCESSED / "hex_snapshot.csv"
 HEX9_SNAPSHOT_PATH = DATA_PROCESSED / "hex9_snapshot.csv"
@@ -162,6 +168,9 @@ def main() -> None:
     if args.train:
         train_and_save()
         return
+
+    if None in (args.postcode, args.property_type, args.duration):
+        parser.error("postcode, property_type and duration are required unless --train is given")
 
     point, lower, upper = predict_price(args.postcode, args.property_type, args.duration, args.old_new)
     print(f"predicted price: £{point:,.0f} (80% interval: £{lower:,.0f} - £{upper:,.0f})")
